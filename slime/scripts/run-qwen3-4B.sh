@@ -1,0 +1,172 @@
+#!/bin/bash
+
+# for rerun the task
+pkill -9 sglang
+sleep 3
+ray stop --force
+pkill -9 ray
+pkill -9 python
+sleep 3
+pkill -9 ray
+pkill -9 python
+
+set -ex
+
+# will prevent ray from buffering stdout/stderr
+export PYTHONUNBUFFERED=1
+
+NVLINK_COUNT=$(nvidia-smi topo -m 2>/dev/null | grep -o 'NV[0-9][0-9]*' | wc -l)
+if [ "$NVLINK_COUNT" -gt 0 ]; then
+    HAS_NVLINK=1
+else
+    HAS_NVLINK=0
+fi
+echo "HAS_NVLINK: $HAS_NVLINK (detected $NVLINK_COUNT NVLink references)"
+
+if command -v nvidia-smi >/dev/null 2>&1; then
+    DETECTED_GPUS=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
+else
+    DETECTED_GPUS=0
+fi
+NUM_GPUS=${NUM_GPUS:-${DETECTED_GPUS}}
+if [ -z "$NUM_GPUS" ] || [ "$NUM_GPUS" -le 0 ]; then
+    NUM_GPUS=8
+fi
+echo "NUM_GPUS: $NUM_GPUS"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+source "${SCRIPT_DIR}/models/qwen3-4B-Instruct-2507.sh"
+
+# Use the 256K-context Instruct-2507 checkpoint and its converted training weights.
+CKPT_ARGS=(
+   --hf-checkpoint /root/Qwen3-4B-Instruct-2507
+   #--hf-checkpoint /root/Qwen3-4B-Instruct-2507-FP8
+   --ref-load /root/Qwen3-4B-Instruct-2507_torch_dist
+   --load /root/Qwen3-4B-Instruct-2507_slime/
+   --save /root/Qwen3-4B-Instruct-2507_slime/
+   --save-interval 20
+)
+
+ROLLOUT_ARGS=(
+   --prompt-data /root/dapo-math-17k/dapo-math-17k.jsonl
+   --input-key prompt
+   --label-key label
+   --apply-chat-template
+   --rollout-shuffle
+   --rm-type deepscaler
+   --num-rollout 3000
+   --rollout-batch-size 32
+   --n-samples-per-prompt 8
+   --rollout-max-response-len 131072
+   --rollout-temperature 1
+
+   --global-batch-size 256
+   --balance-data
+)
+
+EVAL_ARGS=(
+   --eval-interval 20
+   --eval-prompt-data aime /root/aime-2024/aime-2024.jsonl
+   --n-samples-per-eval-prompt 16
+   --eval-max-response-len 131072
+   --eval-top-p 1
+)
+
+PERF_ARGS=(
+   --tensor-model-parallel-size 2
+   --sequence-parallel
+   --pipeline-model-parallel-size 1
+   --context-parallel-size 2
+   --expert-model-parallel-size 1
+   --expert-tensor-parallel-size 1
+
+   --recompute-granularity full
+   --recompute-method uniform
+   --recompute-num-layers 1
+
+   # --micro-batch-size 1
+   --use-dynamic-batch-size
+   --log-probs-chunk-size 1024
+   --max-tokens-per-gpu 9216
+)
+
+GRPO_ARGS=(
+   --advantage-estimator grpo
+   --use-score-centering
+   --score-centering-top-k 128
+   --pg-loss-type reinforce
+   --use-tis
+   --tis-clip-low 0
+   --tis-clip 2
+   --disable-grpo-std-normalization
+   --calculate-per-token-loss
+   --use-kl-loss
+   --kl-loss-coef 0.00
+   --kl-loss-type low_var_kl
+   --entropy-coef 0.00
+)
+
+OPTIMIZER_ARGS=(
+   --optimizer-cpu-offload
+   --overlap-cpu-optimizer-d2h-h2d
+   --use-precision-aware-optimizer
+   --optimizer adam
+   --lr 1e-6
+   --lr-decay-style constant
+   --weight-decay 0.1
+   --adam-beta1 0.9
+   --adam-beta2 0.98
+)
+
+WANDB_ARGS=(
+   # --use-wandb
+   # --wandb-project slime-dev
+   # --wandb-group qwen3-4B-test
+   # --wandb-key ${WANDB_KEY}
+)
+
+SGLANG_ARGS=(
+   --rollout-num-gpus-per-engine 2
+   --sglang-mem-fraction-static 0.7
+)
+
+MISC_ARGS=(
+   # default dropout in megatron is 0.1
+   --attention-dropout 0.0
+   --hidden-dropout 0.0
+   # should be good for model performance
+   --accumulate-allreduce-grads-in-fp32
+   --attention-softmax-in-fp32
+   # need to comment this when using model with MLA
+   --attention-backend flash
+)
+
+# launch the master node of ray in container
+export MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
+ray start --head --node-ip-address ${MASTER_ADDR} --num-gpus ${NUM_GPUS} --disable-usage-stats --dashboard-host=0.0.0.0 --dashboard-port=8265
+
+# Build the runtime environment JSON with proper variable substitution
+RUNTIME_ENV_JSON="{
+  \"env_vars\": {
+    \"PYTHONPATH\": \"/root/Megatron-LM/\",
+    \"CUDA_DEVICE_MAX_CONNECTIONS\": \"1\",
+    \"NCCL_NVLS_ENABLE\": \"${HAS_NVLINK}\"
+  }
+}"
+
+ray job submit --address="http://127.0.0.1:8265" \
+   --runtime-env-json="${RUNTIME_ENV_JSON}" \
+   -- python3 train.py \
+   --actor-num-nodes 1 \
+   --actor-num-gpus-per-node ${NUM_GPUS} \
+   --colocate \
+   ${MODEL_ARGS[@]} \
+   ${CKPT_ARGS[@]} \
+   ${ROLLOUT_ARGS[@]} \
+   ${OPTIMIZER_ARGS[@]} \
+   ${GRPO_ARGS[@]} \
+   ${WANDB_ARGS[@]} \
+   ${PERF_ARGS[@]} \
+   ${EVAL_ARGS[@]} \
+   ${SGLANG_ARGS[@]} \
+   ${MISC_ARGS[@]}

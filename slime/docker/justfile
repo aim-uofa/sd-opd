@@ -1,0 +1,36 @@
+# Build the unified CUDA 13 image locally, without publishing.
+build:
+    #!/bin/bash
+    set -euxo pipefail
+    cd ..
+    VERSION="$(tr -d '\n' < docker/version.txt)"
+    docker build -f docker/Dockerfile . \
+      --build-arg HTTP_PROXY="${http_proxy:-}" \
+      --build-arg HTTPS_PROXY="${https_proxy:-}" \
+      --build-arg NO_PROXY="localhost,127.0.0.1" \
+      -t slimerl/slime:${VERSION}-cu130
+
+# Publishing is explicit. CUDA 13 now owns latest as well as latest-cu130.
+release: build
+    #!/bin/bash
+    set -euxo pipefail
+    cd ..
+    VERSION="$(tr -d '\n' < docker/version.txt)"
+    docker push slimerl/slime:${VERSION}-cu130
+    for tag in latest-cu130 latest; do
+        docker tag slimerl/slime:${VERSION}-cu130 slimerl/slime:$tag
+        docker push slimerl/slime:$tag
+    done
+
+# Retain the existing command for callers that select CUDA 13 explicitly.
+release-cu13: release
+
+debug:
+    #!/bin/bash
+    set -euxo pipefail
+    cd ..
+    VERSION="$(tr -d '\n' < docker/version.txt)"
+    docker build -f docker/Dockerfile . --build-arg HTTP_PROXY="${http_proxy:-}" --build-arg HTTPS_PROXY="${https_proxy:-}" --build-arg NO_PROXY="localhost,127.0.0.1" -t slimerl/slime-test:$VERSION
+    docker push slimerl/slime-test:$VERSION
+    docker tag slimerl/slime-test:$VERSION slimerl/slime-test:latest
+    docker push slimerl/slime-test:latest
