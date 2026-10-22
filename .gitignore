@@ -1,0 +1,14 @@
+# Local dependencies
+/slime/
+/Megatron-LM/
+/sglang/
+/DeepGEMM/
+/DeepEP/
+
+# Downloaded and generated artifacts
+/data/
+/models/
+/checkpoints/
+/eval/results/
+__pycache__/
+*.py[cod]

@@ -1,0 +1,49 @@
+# Multi-task math evaluation for Qwen3 non-thinking mode.
+# Prepared by prepare_data.py; paths are relative to the repository root.
+eval:
+  defaults:
+    apply_chat_template: true
+    apply_chat_template_kwargs:
+      enable_thinking: false
+    n_samples_per_eval_prompt: 16
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+    max_response_len: 38912
+
+  datasets:
+    - name: aime24
+      path: data/eval/aime24.jsonl
+      input_key: prompt
+      label_key: label
+      rm_type: math
+
+    - name: aime25
+      path: data/eval/aime25.jsonl
+      input_key: prompt
+      label_key: label
+      rm_type: math
+
+    - name: hmmt25
+      path: data/eval/hmmt25.jsonl
+      input_key: prompt
+      label_key: label
+      rm_type: math
+
+    - name: amc23
+      path: data/eval/amc23.jsonl
+      input_key: prompt
+      label_key: label
+      rm_type: math
+
+    - name: aime26
+      path: data/eval/aime26.jsonl
+      input_key: prompt
+      label_key: label
+      rm_type: math
+
+    - name: math500
+      path: data/eval/math500.jsonl
+      input_key: prompt
+      label_key: label
+      rm_type: math
