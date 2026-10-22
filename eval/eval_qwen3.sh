@@ -98,6 +98,7 @@ EVAL_ARGS=(
 
 SGLANG_ARGS=(
    --rollout-num-gpus-per-engine "${TP_SIZE}"
+   --sglang-enable-deterministic-inference
    --sglang-server-concurrency 128
    --sglang-context-length 40960
    --sglang-mem-fraction-static 0.7

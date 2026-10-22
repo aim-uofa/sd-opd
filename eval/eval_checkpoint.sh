@@ -46,5 +46,4 @@ fi
 export HF_CHECKPOINT="${HF_CHECKPOINT_PATH}"
 RUN_NAME="$(basename -- "${CHECKPOINT_PATH}")"
 export RESULT_DIR="${RESULT_DIR:-${SCRIPT_DIR}/results/${RUN_NAME}/${CHECKPOINT_ITERATION}}"
-exec bash "${SCRIPT_DIR}/eval_qwen3.sh" "${MODEL}" \
-   --sglang-enable-deterministic-inference "$@"
+exec bash "${SCRIPT_DIR}/eval_qwen3.sh" "${MODEL}" "$@"

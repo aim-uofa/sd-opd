@@ -4,14 +4,7 @@ Math evaluation scripts built on [slime](https://github.com/THUDM/slime).
 
 ## Environment setup
 
-With `conda` available on an NVIDIA GPU machine, run:
-
-```bash
-bash build_slime.sh
-conda activate slime
-```
-
-[build_slime.sh](build_slime.sh) creates or reuses the `slime` environment using the local `./slime` source and downloads Megatron-LM to `./Megatron-LM`.
+Follow the Conda environment setup in the [slime installation guide](https://thudm.github.io/slime/get_started/quick_start.html).
 
 ## Prepare data
 
@@ -30,6 +23,8 @@ Please reason step by step, and put your final answer within \boxed{}.
 The shared evaluation configuration is [eval/math_multi_task.yaml](eval/math_multi_task.yaml).
 
 ## Evaluation
+
+Both evaluation scripts enable SGLang deterministic inference and use `--rollout-seed 42`.
 
 ### Hugging Face models
 
