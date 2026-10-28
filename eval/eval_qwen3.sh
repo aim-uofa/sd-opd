@@ -9,7 +9,7 @@ set -eo pipefail
 # Run download_data.sh to prepare data/eval/*.jsonl under the repository root.
 # EVAL_CONFIG_PATH overrides the eval config; RESULT_DIR selects the output directory.
 # TP_SIZE overrides GPUs per engine. NUM_GPUS defaults to the visible GPU count
-# (8 when CUDA_VISIBLE_DEVICES is unset). Stop an old Ray head before rerunning.
+# (8 when CUDA_VISIBLE_DEVICES is unset). The local Ray instance stops on exit.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -108,6 +108,11 @@ SGLANG_ARGS=(
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 ray start --head --node-ip-address "${MASTER_ADDR}" --num-gpus "${NUM_GPUS}" \
    --disable-usage-stats --dashboard-host=127.0.0.1 --dashboard-port=8265
+
+# Register cleanup only after this script successfully starts Ray.
+trap 'ray stop --force || true' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 RUNTIME_ENV_JSON=$(python3 -c '
 import json, os

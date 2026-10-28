@@ -1,6 +1,6 @@
 # sd-opd
 
-Math evaluation scripts built on [slime](https://github.com/THUDM/slime).
+On-policy distillation and math evaluation scripts built on [slime](https://github.com/THUDM/slime).
 
 ## Environment setup
 
@@ -21,6 +21,35 @@ Please reason step by step, and put your final answer within \boxed{}.
 ```
 
 The shared evaluation configuration is [eval/math_multi_task.yaml](eval/math_multi_task.yaml).
+
+## OPD training
+
+The four vanilla OPD entries in [train/opd/](train/opd/) share the training hyperparameters in [train/config.sh](train/config.sh) and the Slime launcher in [train/opd/run_opd.sh](train/opd/run_opd.sh).
+
+| Teacher | Student | Script |
+| --- | --- | --- |
+| Qwen3-4B-Instruct-2507 | Qwen3-1.7B | [4B-Instruct → 1.7B](train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) |
+| Qwen3-30B-A3B-Instruct-2507 | Qwen3-1.7B | [30B-A3B → 1.7B](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) |
+| Qwen3-30B-A3B-Instruct-2507 | Qwen3-4B | [30B-A3B → 4B](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-4B-nonthinking-opd.sh) |
+| Qwen3-30B-A3B-Instruct-2507 | Qwen3-8B | [30B-A3B → 8B](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-8B-nonthinking-opd.sh) |
+
+Defaults follow `pilot_train` vanilla OPD: 272 rollout rounds, 64 prompts × 4 responses, global batch 64, prompt/response limits 1024/7168, temperature/top-p 1, constant learning rate `1e-6`, Adam betas 0.9/0.98, weight decay 0.1, PPO clip 0.2, token-mean loss, seed 11, and checkpoint saves every 20 rounds plus the final round. Students use `enable_thinking=false`; Slime's SGLang OPD reward hook scores the same token sequence with the teacher. Training does not run evaluation automatically.
+
+Prepare the data with `bash download_data.sh` and place the Hugging Face models under `models/`, or set `WEIGHTS_DIR` to an existing model root. For example:
+
+```bash
+WEIGHTS_DIR=/mnt/cpfs/weights \
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+bash train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh
+```
+
+All four entries default to 4 GPUs (actor/rollout/teacher = 2/1/1) and 16384-token training/log-prob budgets. The Qwen3-8B student uses actor TP=2 with sequence parallelism; the other students use TP=1 by default. The shared `--make-vocab-size-divisible-by 64` keeps the 151936-token vocabulary unchanged at both TP sizes. All entries accept 4 or 8 GPUs via `CUDA_VISIBLE_DEVICES`; 8 GPUs use a 2/4/2 allocation, with the final two GPUs serving the teacher at TP=2 as in Slime's example. Teacher memory fraction defaults to Slime's 0.8.
+
+The dynamic token budget controls microbatch packing without changing global batch size, optimizer updates per rollout, or response length. Parallelism and packing can change floating-point results; identical training scores are not guaranteed. GPU memory fit must be checked on the target hardware.
+
+Edit `train/config.sh` or override its variables, such as `LR=5e-7 NUM_ROLLOUT=20`. `STUDENT_MODEL`, `TEACHER_MODEL`, `DATA_PATH`, and `SAVE_DIR` override individual paths; extra command-line arguments are passed to Slime. Students initialize from Hugging Face weights, or from a converted checkpoint via `STUDENT_MCORE`, and resume from `SAVE_DIR` when it contains a checkpoint. Each setting saves to its own `checkpoints/<teacher>-to-<student>-opd-nonthinking-seed-<seed>/` directory, including `train.log` and `teacher.log`.
+
+Use `DRY_RUN=1 bash train/opd/<script>.sh` to print both commands without starting services or requiring model weights. Teacher and Ray dashboard ports are fixed at 13141 and 8265; there is no port selection or per-setting port offset. The teacher and local Ray instance are stopped when the script exits. If an earlier run left Ray running, run `ray stop` once before restarting.
 
 ## Evaluation
 
@@ -45,7 +74,7 @@ The script looks for models in `models/<model name>`. Set `HF_CHECKPOINT` to use
 | `qwen3-4b-instruct-2507` | `Qwen3-4B-Instruct-2507` | 2 |
 | `qwen3-30b-a3b-instruct-2507` | `Qwen3-30B-A3B-Instruct-2507` | 8 |
 
-Use `CUDA_VISIBLE_DEVICES` to select GPUs. Their count must be a multiple of `TP_SIZE`, which overrides the GPUs per engine shown above. Results are saved under `eval/results/`. After an evaluation finishes, run `ray stop` to stop its local Ray instance before starting another evaluation.
+Use `CUDA_VISIBLE_DEVICES` to select GPUs. Their count must be a multiple of `TP_SIZE`, which overrides the GPUs per engine shown above. Results are saved under `eval/results/`. Both evaluation scripts stop their local Ray instance on exit. If an earlier run left Ray running, run `ray stop` once before restarting evaluation.
 
 ### Megatron checkpoints
 
