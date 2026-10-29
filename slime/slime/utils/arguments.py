@@ -1261,13 +1261,21 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--opd-type",
                 type=str,
-                choices=["sglang", "megatron"],
+                choices=["sglang", "megatron", "mimo"],
                 default=None,
                 help=(
                     "Type of on-policy distillation. "
                     "'sglang': Teacher log-probs are obtained from external SGLang server during rollout. "
-                    "'megatron': Teacher model is loaded via --opd-teacher-load and forwarded during training."
+                    "'megatron': Teacher model is loaded via --opd-teacher-load and forwarded during training. "
+                    "'mimo': A frozen MiMo service scores Qwen3 responses on the shared vocabulary."
                 ),
+            )
+            parser.add_argument(
+                "--opd-shared-vocab-size",
+                type=int,
+                default=0,
+                choices=[0, 151665],
+                help="Restrict MiMo/Qwen3 OPD generation and probabilities to this vocabulary prefix; 0 disables it.",
             )
             parser.add_argument(
                 "--opd-kl-coef",
@@ -1930,7 +1938,9 @@ def slime_validate_args(args):
     # Validate on-policy distillation (OPD) arguments
     if args.use_opd:
         if args.opd_type is None:
-            raise ValueError("--opd-type must be specified when --use-opd is enabled. Choose 'sglang' or 'megatron'.")
+            raise ValueError(
+                "--opd-type must be specified when --use-opd is enabled. Choose 'sglang', 'megatron' or 'mimo'."
+            )
 
         if args.opd_type == "megatron":
             if args.opd_teacher_load is None:
@@ -1948,16 +1958,21 @@ def slime_validate_args(args):
                     "please make sure it is a valid megatron checkpoint directory."
                 )
 
-        elif args.opd_type == "sglang":
+        elif args.opd_type in ("sglang", "mimo"):
             if args.opd_teacher_load is not None:
                 raise ValueError(
-                    "--opd-teacher-load should not be set when --opd-type=sglang. "
-                    "In sglang mode, teacher log-probs are obtained from external server during rollout."
+                    "--opd-teacher-load should not be set for an external OPD teacher. "
+                    "Teacher log-probs are obtained from the scoring server during rollout."
                 )
     else:
         # If OPD is not enabled, opd_teacher_load should not be set
         if args.opd_teacher_load is not None:
             raise ValueError("--opd-teacher-load is set but --use-opd is not enabled. Please add --use-opd flag.")
+
+    if getattr(args, "opd_shared_vocab_size", 0) or (args.use_opd and args.opd_type == "mimo"):
+        from slime.utils.shared_vocab import validate_args as validate_shared_vocab_args
+
+        validate_shared_vocab_args(args)
 
     # Resolve the logical checkpoint directory before the model loader's
     # HuggingFace/finetune fallback can replace --load or disable optimizer load.

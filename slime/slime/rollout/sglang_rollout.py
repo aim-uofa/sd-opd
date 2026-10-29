@@ -155,7 +155,13 @@ class GenerateState(metaclass=SingletonMeta):
         self.remaining_batch_size += len(samples)
 
 
-async def generate(args: Namespace, sample: Sample, sampling_params: dict[str, Any]) -> Sample:
+async def generate(
+    args: Namespace,
+    sample: Sample,
+    sampling_params: dict[str, Any],
+    *,
+    custom_logit_processor: str | None = None,
+) -> Sample:
     """Generate using traditional SGLang router with token-based workflow"""
     if args.ci_test:
         assert isinstance(sample.prompt, str)
@@ -183,6 +189,8 @@ async def generate(args: Namespace, sample: Sample, sampling_params: dict[str, A
         "sampling_params": sampling_params,
         "return_logprob": True,
     }
+    if custom_logit_processor is not None:
+        payload["custom_logit_processor"] = custom_logit_processor
 
     from slime.utils.score_centering import score_centering_request
 

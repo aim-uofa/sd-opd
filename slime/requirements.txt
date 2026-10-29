@@ -3,6 +3,7 @@ anthropic
 blake3
 blobfile
 datasets
+dill
 e2b
 httpx[http2]
 mcp[cli]

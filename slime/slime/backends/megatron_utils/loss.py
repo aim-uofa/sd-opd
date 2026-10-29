@@ -28,6 +28,7 @@ from slime.utils.ppo_utils import (
     importance_weights,
 )
 from slime.utils.score_centering import get_score_centering_is_config, score_centering_correction
+from slime.utils.shared_vocab import restrict_logits
 from slime.utils.types import RolloutBatch
 
 from .cp_utils import (
@@ -288,9 +289,30 @@ def _build_shifted_tokens(
     total_lengths: list[int],
     response_lengths: list[int],
     allgather_cp: bool,
+    shared_vocab_size: int = 0,
 ) -> torch.Tensor:
     """Build shifted target tokens for the full packed/padded logits."""
     cp_size = mpu.get_context_parallel_world_size()
+
+    if shared_vocab_size:
+        if cp_size != 1:
+            raise ValueError("Shared-vocabulary OPD requires CP=1")
+        # Prompt/padding rows never enter the loss. Use legal dummy targets for
+        # those rows while preserving the actual model inputs (including <think>).
+        full_tokens = torch.zeros(T, dtype=torch.long, device=device)
+        offset = 0
+        for tokens, total_length, response_length in zip(
+            unconcat_tokens, total_lengths, response_lengths, strict=True
+        ):
+            if not 0 <= response_length < total_length or offset + total_length > T:
+                raise ValueError("Invalid packed prompt/response lengths")
+            start = total_length - response_length
+            targets = tokens[start:total_length]
+            if targets.numel() != response_length or ((targets < 0) | (targets >= shared_vocab_size)).any():
+                raise ValueError("Response token outside the shared vocabulary")
+            full_tokens[offset + start - 1:offset + total_length - 1] = targets
+            offset += total_length
+        return full_tokens
 
     # --- zigzag CP: completely different layout ---
     if cp_size > 1 and not allgather_cp:
@@ -556,7 +578,7 @@ def get_log_probs_and_entropy(
     assert logits.dtype == torch.float32, f"{logits.dtype}"
     assert len(logits.shape) == 3, f"{logits.shape}"
     assert logits.size(0) == 1, f"{logits.shape}"
-    logits = logits.squeeze(0)
+    logits = restrict_logits(logits.squeeze(0), args)
 
     # Apply rollout temperature scaling to logits to match rollout-time log-probs.
     rollout_temperature = getattr(args, "rollout_temperature", 1.0)
@@ -572,7 +594,10 @@ def get_log_probs_and_entropy(
     with_entropy_grad = with_entropy and getattr(args, "entropy_coef", 0.0) != 0
 
     # --- build full shifted-token target tensor ---
-    full_tokens = _build_shifted_tokens(T, device, unconcat_tokens, total_lengths, response_lengths, args.allgather_cp)
+    full_tokens = _build_shifted_tokens(
+        T, device, unconcat_tokens, total_lengths, response_lengths, args.allgather_cp,
+        shared_vocab_size=getattr(args, "opd_shared_vocab_size", 0),
+    )
 
     # --- build top-p nucleus keep-mask (logprob only; entropy stays unmasked) ---
     top_p_keep_mask = None
