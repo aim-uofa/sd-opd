@@ -1,91 +1,102 @@
-# sd-opd
+<div align="center">
 
-On-policy distillation and math evaluation scripts built on [slime](https://github.com/THUDM/slime).
+# Building on What the Student Has Learned: Teacher-Guided On-Policy Distillation
 
-## Environment setup
+![arXiv: Coming Soon](https://img.shields.io/badge/arXiv-Coming%20Soon-b31b1b) [![Project](https://img.shields.io/badge/Project-Page-blue)](https://github.com/fangbozhen/sd-opd) [![Code](https://img.shields.io/badge/Code-GitHub-orange)](https://github.com/fangbozhen/sd-opd)
 
-Follow the Conda environment setup in the [slime installation guide](https://thudm.github.io/slime/get_started/quick_start.html).
+</div>
 
-## Prepare data
+## Overview
+
+**Student-Delta On-Policy Distillation (SD-OPD)** builds on the student's own acquired behavior to improve reasoning under teacher guidance. Standard OPD scales token-level updates by teacher–student log-probability differences, which can emphasize differences in wording and formatting. SD-OPD instead uses the student's changes relative to its frozen pretrained base as the source of update strength:
+
+- **Student-derived coefficients:** centered student–base log-probability differences determine the update magnitude and direction.
+- **Teacher-guided selection:** a coefficient is retained only when its sign agrees with centered teacher–student feedback.
+- **Evolving supervision:** the student signal is refreshed each training round, while the teacher and base remain fixed.
+
+![SD-OPD method overview: student rollouts, token scoring, teacher-guided selection, and student updates.](assets/method.png)
+
+The study evaluates Qwen3-1.7B, Qwen3-4B, and Qwen3-8B students on six mathematics benchmarks. This repository builds on [slime](https://github.com/THUDM/slime) for training and evaluation; the currently available training launchers run vanilla OPD baselines.
+
+## Getting Started
+
+Run all commands from the repository root.
+
+### 1. Environment Setup
+
+Follow the [slime environment setup guide](slime/docs/en/get_started/quick_start.md), using the bundled `slime/` checkout. If Megatron-LM is installed outside this repository, set `MEGATRON_ROOT` to its installation directory.
+
+### 2. Models and Data
+
+Download the teacher and student for your chosen training setting into the local `models/` directory, keeping their original model names as subdirectory names. For example, for Qwen3-4B-Instruct-2507 → Qwen3-1.7B:
+
+```bash
+hf download Qwen/Qwen3-1.7B --local-dir models/Qwen3-1.7B
+hf download Qwen/Qwen3-4B-Instruct-2507 --local-dir models/Qwen3-4B-Instruct-2507
+```
+
+The training settings below use the same layout: `models/<model-name>/`. Each model directory should contain its Hugging Face weights, configuration, and tokenizer files.
+
+Download and prepare the data with:
 
 ```bash
 bash download_data.sh
 ```
 
-This downloads DAPO-Math-17k and six evaluation datasets: AIME 2024, AIME 2025, AIME 2026, HMMT February 2025, AMC 2023, and MATH-500. It then runs [prepare_data.py](prepare_data.py) to write the evaluation files to `data/eval/`, keeping the original downloads in `data/`.
+This downloads DAPO-Math-17k for training and six evaluation datasets: AIME 2024, AIME 2025, AIME 2026, HMMT February 2025, AMC 2023, and MATH-500. Raw datasets are saved under `data/`, and evaluation files are prepared under `data/eval/`.
 
-All six evaluation datasets use the same suffix:
+### 3. Training
 
-```text
-Please reason step by step, and put your final answer within \boxed{}.
-```
+Choose a vanilla OPD launcher from [train/opd/](train/opd/):
 
-The shared evaluation configuration is [eval/math_multi_task.yaml](eval/math_multi_task.yaml).
-
-## OPD training
-
-The four vanilla OPD entries in [train/opd/](train/opd/) share the training hyperparameters in [train/config.sh](train/config.sh) and the Slime launcher in [train/opd/run_opd.sh](train/opd/run_opd.sh).
-
-| Teacher | Student | Script |
+| Teacher | Student | Launcher |
 | --- | --- | --- |
-| Qwen3-4B-Instruct-2507 | Qwen3-1.7B | [4B-Instruct → 1.7B](train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) |
+| Qwen3-4B-Instruct-2507 | Qwen3-1.7B | [4B → 1.7B](train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) |
 | Qwen3-30B-A3B-Instruct-2507 | Qwen3-1.7B | [30B-A3B → 1.7B](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) |
 | Qwen3-30B-A3B-Instruct-2507 | Qwen3-4B | [30B-A3B → 4B](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-4B-nonthinking-opd.sh) |
 | Qwen3-30B-A3B-Instruct-2507 | Qwen3-8B | [30B-A3B → 8B](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-8B-nonthinking-opd.sh) |
+| MiMo-7B-RL-0530 | Qwen3-1.7B | [MiMo → 1.7B](train/opd/run-mimo-7B-RL-0530-to-qwen3-1.7B-opd.sh) |
 
-Defaults follow `pilot_train` vanilla OPD: 272 rollout rounds, 64 prompts × 4 responses, global batch 64, prompt/response limits 1024/7168, temperature/top-p 1, constant learning rate `1e-6`, Adam betas 0.9/0.98, weight decay 0.1, PPO clip 0.2, token-mean loss, seed 11, and checkpoint saves every 20 rounds plus the final round. Students use `enable_thinking=false`; Slime's SGLang OPD reward hook scores the same token sequence with the teacher. Training does not run evaluation automatically.
-
-Prepare the data with `bash download_data.sh` and place the Hugging Face models under `models/`, or set `WEIGHTS_DIR` to an existing model root. For example:
+For example:
 
 ```bash
-WEIGHTS_DIR=/mnt/cpfs/weights \
 CUDA_VISIBLE_DEVICES=0,1,2,3 \
+SAVE_DIR=checkpoints/qwen3-1.7b-opd \
 bash train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh
 ```
 
-All four entries default to 4 GPUs (actor/rollout/teacher = 2/1/1) and 16384-token training/log-prob budgets. The Qwen3-8B student uses actor TP=2 with sequence parallelism; the other students use TP=1 by default. The shared `--make-vocab-size-divisible-by 64` keeps the 151936-token vocabulary unchanged at both TP sizes. All entries accept 4 or 8 GPUs via `CUDA_VISIBLE_DEVICES`; 8 GPUs use a 2/4/2 allocation, with the final two GPUs serving the teacher at TP=2 as in Slime's example. Teacher memory fraction defaults to Slime's 0.8.
+Launchers accept 4 or 8 GPUs selected through `CUDA_VISIBLE_DEVICES`. Shared training settings are in [train/config.sh](train/config.sh) and can be overridden with environment variables. `SAVE_DIR` selects the checkpoint and log directory; it defaults to a setting-specific directory under `checkpoints/`.
 
-The dynamic token budget controls microbatch packing without changing global batch size, optimizer updates per rollout, or response length. Parallelism and packing can change floating-point results; identical training scores are not guaranteed. GPU memory fit must be checked on the target hardware.
+### 4. Evaluation
 
-Edit `train/config.sh` or override its variables, such as `LR=5e-7 NUM_ROLLOUT=20`. `STUDENT_MODEL`, `TEACHER_MODEL`, `DATA_PATH`, and `SAVE_DIR` override individual paths; extra command-line arguments are passed to Slime. Students initialize from Hugging Face weights, or from a converted checkpoint via `STUDENT_MCORE`, and resume from `SAVE_DIR` when it contains a checkpoint. Each setting saves to its own `checkpoints/<teacher>-to-<student>-opd-nonthinking-seed-<seed>/` directory, including `train.log` and `teacher.log`.
-
-Use `DRY_RUN=1 bash train/opd/<script>.sh` to print both commands without starting services or requiring model weights. Teacher and Ray dashboard ports are fixed at 13141 and 8265; there is no port selection or per-setting port offset. The teacher and local Ray instance are stopped when the script exits. If an earlier run left Ray running, run `ray stop` once before restarting.
-
-## Evaluation
-
-Both evaluation scripts enable SGLang deterministic inference and use `--rollout-seed 42`.
-
-### Hugging Face models
-
-For example, download and evaluate Qwen3-4B:
+Evaluate a downloaded Qwen3 model:
 
 ```bash
-hf download Qwen/Qwen3-4B --local-dir models/Qwen3-4B
-CUDA_VISIBLE_DEVICES=0,1 bash eval/eval_qwen3.sh qwen3-4b
+CUDA_VISIBLE_DEVICES=0 bash eval/eval_qwen3.sh qwen3-1.7b
 ```
 
-The script looks for models in `models/<model name>`. Set `HF_CHECKPOINT` to use an existing local model directory.
+The script also accepts `qwen3-4b`, `qwen3-8b`, `qwen3-4b-instruct-2507`, and `qwen3-30b-a3b-instruct-2507`. These default to 2, 2, 2, and 8 GPUs per engine, respectively; select a matching number of GPUs with `CUDA_VISIBLE_DEVICES`.
 
-| Script argument | Model name | Default GPUs per engine |
-| --- | --- | --- |
-| `qwen3-1.7b` | `Qwen3-1.7B` | 1 |
-| `qwen3-4b` | `Qwen3-4B` | 2 |
-| `qwen3-8b` | `Qwen3-8B` | 2 |
-| `qwen3-4b-instruct-2507` | `Qwen3-4B-Instruct-2507` | 2 |
-| `qwen3-30b-a3b-instruct-2507` | `Qwen3-30B-A3B-Instruct-2507` | 8 |
-
-Use `CUDA_VISIBLE_DEVICES` to select GPUs. Their count must be a multiple of `TP_SIZE`, which overrides the GPUs per engine shown above. Results are saved under `eval/results/`. Both evaluation scripts stop their local Ray instance on exit. If an earlier run left Ray running, run `ray stop` once before restarting evaluation.
-
-### Megatron checkpoints
-
-Set `BASE_MODEL` to the matching original Hugging Face model directory and `CHECKPOINT_PATH` to the directory containing `iter_XXXXXXX` checkpoints:
+To evaluate the original MiMo teacher:
 
 ```bash
-BASE_MODEL=models/Qwen3-4B \
-CHECKPOINT_PATH=/path/to/checkpoints \
+CUDA_VISIBLE_DEVICES=0,1 bash eval/eval_mimo_7b_rl_0530.sh
+```
+
+To evaluate a trained student, set the matching base model, checkpoint directory, and saved step:
+
+```bash
+BASE_MODEL=models/Qwen3-1.7B \
+CHECKPOINT_PATH=checkpoints/qwen3-1.7b-opd \
 CHECKPOINT_STEP=119 \
-CUDA_VISIBLE_DEVICES=0,1 \
-bash eval/eval_checkpoint.sh qwen3-4b
+CUDA_VISIBLE_DEVICES=0 \
+bash eval/eval_checkpoint.sh qwen3-1.7b
 ```
 
-This converts `iter_0000119` to Hugging Face format with slime's conversion tool, caches it under `CHECKPOINT_PATH/hf/iter_0000119`, and runs the same evaluation configuration.
+This example converts `iter_0000119` to Hugging Face format and evaluates it. Change `CHECKPOINT_STEP` to select another saved checkpoint. All evaluations use [eval/math_multi_task.yaml](eval/math_multi_task.yaml), with results saved under `eval/results/`.
+
+## Acknowledgments
+
+Our implementation builds on [slime](https://github.com/THUDM/slime), [SGLang](https://github.com/sgl-project/sglang), and [Megatron-LM](https://github.com/NVIDIA/Megatron-LM). We thank their contributors, as well as the Qwen and MiMo teams and the dataset authors, for their open-source work.
+
+## Citation
