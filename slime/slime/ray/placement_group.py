@@ -192,7 +192,11 @@ def create_actor_model(args, pgs, rollout_manager, actor_cls=None):
         num_nodes=args.actor_num_nodes,
         num_gpus_per_node=args.actor_num_gpus_per_node,
         pg=pgs["actor"],
-        with_ref=actor_args.kl_coef != 0 or actor_args.use_kl_loss,
+        with_ref=(
+            actor_args.kl_coef != 0
+            or actor_args.use_kl_loss
+            or (actor_args.use_opd and actor_args.opd_type == "exopd")
+        ),
         with_opd_teacher=actor_args.use_opd and actor_args.opd_type == "megatron",
         **actor_model_kwargs,
     )

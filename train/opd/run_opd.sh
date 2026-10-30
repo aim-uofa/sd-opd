@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared Slime OPD launcher; select a setting via train/opd/*.sh.
+# Shared Slime launcher; select a setting via train/opd/ or train/exopd/.
 set -euo pipefail
 
 TRAIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,14 +11,22 @@ SLIME_ROOT="${SLIME_ROOT:-${REPO_ROOT}/slime}"
 MEGATRON_ROOT="${MEGATRON_ROOT:-${REPO_ROOT}/Megatron-LM}"
 export PYTHONPATH="${MEGATRON_ROOT}:${SLIME_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 OPD_TYPE="${OPD_TYPE:-sglang}"
+OPD_VARIANT=opd
+TRAIN_OPD_TYPE="${OPD_TYPE}"
+METHOD_ARGS=()
+if [[ "${OPD_METHOD:-opd}" == exopd ]]; then
+   OPD_VARIANT="exopd-l${EXOPD_SCALE}"
+   TRAIN_OPD_TYPE=exopd
+   METHOD_ARGS=(--exopd-scale "${EXOPD_SCALE}")
+fi
 WEIGHTS_DIR="${WEIGHTS_DIR:-${REPO_ROOT}/models}"
 STUDENT_MODEL="${STUDENT_MODEL:-${WEIGHTS_DIR}/${STUDENT_NAME}}"
 TEACHER_MODEL="${TEACHER_MODEL:-${WEIGHTS_DIR}/${TEACHER_NAME}}"
 STUDENT_MCORE="${STUDENT_MCORE:-${STUDENT_MODEL}}"
 DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/dapo-math-17k/dapo-math-17k.jsonl}"
-RUN_NAME="${TEACHER_NAME,,}-to-${STUDENT_NAME,,}-opd-nonthinking-seed-${TRAIN_SEED}"
+RUN_NAME="${TEACHER_NAME,,}-to-${STUDENT_NAME,,}-${OPD_VARIANT}-nonthinking-seed-${TRAIN_SEED}"
 if [[ "${OPD_TYPE}" == mimo ]]; then
-   RUN_NAME="${TEACHER_NAME,,}-to-${STUDENT_NAME,,}-opd-shared-vocab-v3-seed-${TRAIN_SEED}"
+   RUN_NAME="${TEACHER_NAME,,}-to-${STUDENT_NAME,,}-${OPD_VARIANT}-shared-vocab-v3-seed-${TRAIN_SEED}"
    if [[ "${TP_SIZE}" != 1 ]]; then
       echo "MiMo shared-vocabulary OPD requires actor TP_SIZE=1." >&2
       exit 1
@@ -36,7 +44,7 @@ SAVE_DIR="${SAVE_DIR:-${REPO_ROOT}/checkpoints/${RUN_NAME}}"
 TEACHER_LOG_FILE="${TEACHER_LOG_FILE:-${SAVE_DIR}/teacher.log}"
 source "${SLIME_ROOT}/scripts/models/${STUDENT_NAME,}.sh"
 
-# Keep the pilot's GPU counts; use Slime's TP teacher on the final GPU(s).
+# Use Slime's TP teacher on the final GPU(s).
 # CUDA_VISIBLE_DEVICES specifies physical GPUs, in actor/rollout/teacher order.
 VISIBLE_GPUS="${CUDA_VISIBLE_DEVICES-0,1,2,3}"
 IFS=',' read -r -a GPU_IDS <<< "${VISIBLE_GPUS}"
@@ -114,11 +122,12 @@ RM_ARGS=(
 OPD_ARGS=(
    --advantage-estimator grpo
    --use-opd
-   --opd-type "${OPD_TYPE}"
+   --opd-type "${TRAIN_OPD_TYPE}"
    --opd-kl-coef "${OPD_KL_COEF}"
    --eps-clip "${EPS_CLIP}"
    --entropy-coef "${ENTROPY_COEF}"
    --calculate-per-token-loss
+   "${METHOD_ARGS[@]}"
 )
 OPTIMIZER_ARGS=(
    --optimizer adam
@@ -191,7 +200,10 @@ if [[ "${OPD_TYPE}" == mimo ]]; then
    )
 fi
 
-echo "OPD: ${TEACHER_NAME} -> ${STUDENT_NAME}; checkpoints: ${SAVE_DIR}"
+echo "${OPD_VARIANT}: ${TEACHER_NAME} -> ${STUDENT_NAME}; checkpoints: ${SAVE_DIR}"
+if [[ "${TRAIN_OPD_TYPE}" == exopd ]]; then
+   echo "ExOPD: lambda=${EXOPD_SCALE}; frozen initial student=${STUDENT_MCORE}"
+fi
 echo "Actor/rollout GPUs: ${TRAIN_GPUS}; teacher GPUs: ${TEACHER_GPUS}"
 for required_path in "${STUDENT_MODEL}/config.json" "${TEACHER_MODEL}/config.json" \
    "${STUDENT_MCORE}" "${DATA_PATH}"; do

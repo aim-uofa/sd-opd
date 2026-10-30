@@ -1261,14 +1261,21 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--opd-type",
                 type=str,
-                choices=["sglang", "megatron", "mimo"],
+                choices=["sglang", "megatron", "mimo", "exopd"],
                 default=None,
                 help=(
                     "Type of on-policy distillation. "
                     "'sglang': Teacher log-probs are obtained from external SGLang server during rollout. "
                     "'megatron': Teacher model is loaded via --opd-teacher-load and forwarded during training. "
-                    "'mimo': A frozen MiMo service scores Qwen3 responses on the shared vocabulary."
+                    "'mimo': A frozen MiMo service scores Qwen3 responses on the shared vocabulary. "
+                    "'exopd': Extrapolate external teacher rewards using the frozen initial student."
                 ),
+            )
+            parser.add_argument(
+                "--exopd-scale",
+                type=float,
+                default=1.25,
+                help="ExOPD reward extrapolation lambda; 1 recovers vanilla OPD.",
             )
             parser.add_argument(
                 "--opd-shared-vocab-size",
@@ -1939,7 +1946,7 @@ def slime_validate_args(args):
     if args.use_opd:
         if args.opd_type is None:
             raise ValueError(
-                "--opd-type must be specified when --use-opd is enabled. Choose 'sglang', 'megatron' or 'mimo'."
+                "--opd-type must be specified when --use-opd is enabled. Choose 'sglang', 'megatron', 'mimo' or 'exopd'."
             )
 
         if args.opd_type == "megatron":
@@ -1958,7 +1965,7 @@ def slime_validate_args(args):
                     "please make sure it is a valid megatron checkpoint directory."
                 )
 
-        elif args.opd_type in ("sglang", "mimo"):
+        elif args.opd_type in ("sglang", "mimo", "exopd"):
             if args.opd_teacher_load is not None:
                 raise ValueError(
                     "--opd-teacher-load should not be set for an external OPD teacher. "
@@ -1968,6 +1975,13 @@ def slime_validate_args(args):
         # If OPD is not enabled, opd_teacher_load should not be set
         if args.opd_teacher_load is not None:
             raise ValueError("--opd-teacher-load is set but --use-opd is not enabled. Please add --use-opd flag.")
+
+    if args.opd_type == "exopd":
+        from slime.utils.exopd import validate_exopd_args
+
+        validate_exopd_args(args)
+        if not os.path.exists(args.ref_load):
+            raise FileNotFoundError(f"ref_load {args.ref_load} does not exist, please check the initial-student path.")
 
     if getattr(args, "opd_shared_vocab_size", 0) or (args.use_opd and args.opd_type == "mimo"):
         from slime.utils.shared_vocab import validate_args as validate_shared_vocab_args

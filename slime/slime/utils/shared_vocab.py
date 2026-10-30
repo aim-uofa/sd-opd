@@ -105,8 +105,8 @@ def restrict_logits(logits, args):
 
 
 def validate_args(args):
-    if not args.use_opd or args.opd_type != "mimo" or args.opd_shared_vocab_size != MIMO_SHARED_VOCAB_SIZE:
-        raise ValueError("MiMo OPD requires --use-opd --opd-type mimo --opd-shared-vocab-size 151665")
+    if not args.use_opd or args.opd_type not in ("mimo", "exopd") or args.opd_shared_vocab_size != MIMO_SHARED_VOCAB_SIZE:
+        raise ValueError("MiMo OPD requires --use-opd, --opd-type mimo or exopd, and --opd-shared-vocab-size 151665")
     if getattr(args, "train_backend", "megatron") != "megatron" or any(
         getattr(args, key, 1) != 1
         for key in ("tensor_model_parallel_size", "pipeline_model_parallel_size", "context_parallel_size")
@@ -137,7 +137,7 @@ def validate_args(args):
         or getattr(args, "custom_loss_function_path", None)
         or getattr(args, "custom_pg_loss_reducer_function_path", None)
     ):
-        raise ValueError("MiMo vanilla OPD requires token-mean PPO with zero task reward and no extra losses")
+        raise ValueError("MiMo OPD requires token-mean PPO with zero task reward and no extra losses")
     if (
         args.custom_rm_path != REWARD_MODULE + ".reward_func"
         or args.custom_reward_post_process_path != REWARD_MODULE + ".post_process_rewards"
