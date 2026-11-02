@@ -16,7 +16,7 @@
 
 ![SD-OPD method overview: student rollouts, token scoring, teacher-guided selection, and student updates.](assets/method.png)
 
-The study evaluates Qwen3-1.7B, Qwen3-4B, and Qwen3-8B students on six mathematics benchmarks. This repository builds on [slime](https://github.com/THUDM/slime) for training and evaluation; the currently available training launchers run vanilla OPD and ExOPD baselines.
+The study evaluates Qwen3-1.7B, Qwen3-4B, and Qwen3-8B students on six mathematics benchmarks. This repository builds on [slime](https://github.com/THUDM/slime) for training and evaluation; training launchers cover SD-OPD and the OPD and ExOPD baselines.
 
 ## Getting Started
 
@@ -47,31 +47,18 @@ This downloads DAPO-Math-17k for training and six evaluation datasets: AIME 2024
 
 ### 3. Training
 
-Choose a vanilla OPD launcher from [train/opd/](train/opd/) or an ExOPD launcher from [train/exopd/](train/exopd/):
+We provide training scripts for five teacher–student settings in each method directory:
 
-| Teacher | Student | OPD | ExOPD |
-| --- | --- | --- | --- |
-| Qwen3-4B-Instruct-2507 | Qwen3-1.7B | [Launch](train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) | [Launch](train/exopd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-exopd.sh) |
-| Qwen3-30B-A3B-Instruct-2507 | Qwen3-1.7B | [Launch](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh) | [Launch](train/exopd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-1.7B-nonthinking-exopd.sh) |
-| Qwen3-30B-A3B-Instruct-2507 | Qwen3-4B | [Launch](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-4B-nonthinking-opd.sh) | [Launch](train/exopd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-4B-nonthinking-exopd.sh) |
-| Qwen3-30B-A3B-Instruct-2507 | Qwen3-8B | [Launch](train/opd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-8B-nonthinking-opd.sh) | [Launch](train/exopd/run-qwen3-30B-A3B-Instruct-2507-to-qwen3-8B-nonthinking-exopd.sh) |
-| MiMo-7B-RL-0530 | Qwen3-1.7B | [Launch](train/opd/run-mimo-7B-RL-0530-to-qwen3-1.7B-opd.sh) | [Launch](train/exopd/run-mimo-7B-RL-0530-to-qwen3-1.7B-exopd.sh) |
+- **SD-OPD:** [train/sd_opd/](train/sd_opd/)
+- **OPD:** [train/opd/](train/opd/)
+- **ExOPD:** [train/exopd/](train/exopd/)
 
-For example:
+For example, train Qwen3-1.7B with the Qwen3-4B-Instruct-2507 teacher using SD-OPD:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 \
-SAVE_DIR=checkpoints/qwen3-1.7b-opd \
-bash train/opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-opd.sh
-```
-
-Launchers accept 4 or 8 GPUs selected through `CUDA_VISIBLE_DEVICES`. Shared training settings are in [train/config.sh](train/config.sh) and can be overridden with environment variables. `SAVE_DIR` selects the checkpoint and log directory; it defaults to a setting-specific directory under `checkpoints/`.
-
-ExOPD defaults to `EXOPD_SCALE=1.25` and uses the frozen initial student as its reference on the actor GPUs. `STUDENT_MCORE` selects that initial checkpoint (default: `STUDENT_MODEL`); it stays fixed when the actor resumes from `SAVE_DIR`. Default ExOPD checkpoint directories include the scale and are separate from vanilla OPD. A scale of 1 recovers the vanilla OPD advantage. The 8B ExOPD entry matches the corresponding vanilla OPD entry: TP=2, with training/log-prob token budgets inherited from `train/config.sh` (default: 16384 tokens per GPU).
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 EXOPD_SCALE=1.25 \
-bash train/exopd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-exopd.sh
+STUDENT_BASE_MODEL=models/Qwen3-1.7B-Base \
+bash train/sd_opd/run-qwen3-4B-Instruct-2507-to-qwen3-1.7B-nonthinking-sd-opd.sh
 ```
 
 ### 4. Evaluation

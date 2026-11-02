@@ -15,4 +15,4 @@ for arg in "$@"; do
          ;;
    esac
 done
-exec bash "${SCRIPT_DIR}/../opd/run_opd.sh" "$@"
+exec bash "${SCRIPT_DIR}/../run_opd.sh" "$@"

@@ -727,6 +727,12 @@ def apply_opd_kl_to_advantages(
         https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/distillation/train_on_policy.py
     """
 
+    if args.opd_type == "student_base_delta":
+        from .student_base_delta import apply_student_base_delta_advantages
+
+        apply_student_base_delta_advantages(args, rollout_data, advantages, student_log_probs)
+        return
+
     if args.opd_type == "exopd":
         from slime.utils.exopd import apply_exopd_advantages
 

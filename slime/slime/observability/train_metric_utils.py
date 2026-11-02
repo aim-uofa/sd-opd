@@ -186,6 +186,15 @@ def log_rollout_data(
             "advantages",
             "values",
             "teacher_log_probs",
+            "student_base_log_probs",
+            "sbd_teacher_advantages",
+            "sbd_student_advantages",
+            "sbd_advantages",
+            "sbd_active",
+            "sbd_topk_mass",
+            "sbd_bonus",
+            "sbd_saturated",
+            "sbd_scale",
             "opd_reverse_kl",
         }
 

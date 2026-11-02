@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Shared Slime launcher; select a setting via train/opd/ or train/exopd/.
+# Shared Slime launcher for the settings under train/.
 set -euo pipefail
 
-TRAIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+TRAIN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${TRAIN_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 source "${TRAIN_DIR}/config.sh"
@@ -11,18 +11,38 @@ SLIME_ROOT="${SLIME_ROOT:-${REPO_ROOT}/slime}"
 MEGATRON_ROOT="${MEGATRON_ROOT:-${REPO_ROOT}/Megatron-LM}"
 export PYTHONPATH="${MEGATRON_ROOT}:${SLIME_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 OPD_TYPE="${OPD_TYPE:-sglang}"
+OPD_METHOD="${OPD_METHOD:-opd}"
 OPD_VARIANT=opd
 TRAIN_OPD_TYPE="${OPD_TYPE}"
 METHOD_ARGS=()
-if [[ "${OPD_METHOD:-opd}" == exopd ]]; then
+if [[ "${OPD_METHOD}" == exopd ]]; then
    OPD_VARIANT="exopd-l${EXOPD_SCALE}"
    TRAIN_OPD_TYPE=exopd
    METHOD_ARGS=(--exopd-scale "${EXOPD_SCALE}")
+elif [[ "${OPD_METHOD}" == sd_opd ]]; then
+   OPD_VARIANT="sd-opd-k${STUDENT_BASE_DELTA_TOP_K}"
+   TRAIN_OPD_TYPE=student_base_delta
+   METHOD_ARGS=(
+      --student-base-delta-mode direct
+      --student-base-delta-strength 0
+      --student-base-delta-student-source current
+      --student-base-delta-top-k "${STUDENT_BASE_DELTA_TOP_K}"
+      --student-base-delta-scorer-timeout "${STUDENT_BASE_DELTA_SCORER_TIMEOUT}"
+      --student-base-delta-scorer-url http://127.0.0.1:13141/score
+   )
+   if [[ "${STUDENT_BASE_DELTA_DUAL_CLIP}" != none ]]; then
+      METHOD_ARGS+=(--eps-clip-c "${STUDENT_BASE_DELTA_DUAL_CLIP}")
+   fi
 fi
 WEIGHTS_DIR="${WEIGHTS_DIR:-${REPO_ROOT}/models}"
 STUDENT_MODEL="${STUDENT_MODEL:-${WEIGHTS_DIR}/${STUDENT_NAME}}"
 TEACHER_MODEL="${TEACHER_MODEL:-${WEIGHTS_DIR}/${TEACHER_NAME}}"
 STUDENT_MCORE="${STUDENT_MCORE:-${STUDENT_MODEL}}"
+BASE_MODEL_ARGS=()
+if [[ "${OPD_METHOD}" == sd_opd ]]; then
+   STUDENT_BASE_MODEL="${STUDENT_BASE_MODEL:-${WEIGHTS_DIR}/${STUDENT_NAME}-Base}"
+   BASE_MODEL_ARGS=(--student-base-model "${STUDENT_BASE_MODEL}")
+fi
 DATA_PATH="${DATA_PATH:-${REPO_ROOT}/data/dapo-math-17k/dapo-math-17k.jsonl}"
 RUN_NAME="${TEACHER_NAME,,}-to-${STUDENT_NAME,,}-${OPD_VARIANT}-nonthinking-seed-${TRAIN_SEED}"
 if [[ "${OPD_TYPE}" == mimo ]]; then
@@ -41,6 +61,7 @@ if [[ "${OPD_TYPE}" == mimo ]]; then
    done
 fi
 SAVE_DIR="${SAVE_DIR:-${REPO_ROOT}/checkpoints/${RUN_NAME}}"
+export TENSORBOARD_DIR="$(realpath -m -- "${TENSORBOARD_DIR:-${SAVE_DIR}/tensorboard}")"
 TEACHER_LOG_FILE="${TEACHER_LOG_FILE:-${SAVE_DIR}/teacher.log}"
 source "${SLIME_ROOT}/scripts/models/${STUDENT_NAME,}.sh"
 
@@ -74,9 +95,11 @@ REWARD_MODULE=slime.rollout.on_policy_distillation
 REWARD_ENDPOINT=generate
 MIMO_ARGS=()
 if [[ "${OPD_TYPE}" == mimo ]]; then
-   # MiMo is a frozen Transformers scorer on one GPU, including in 8-GPU runs.
-   TEACHER_NUM_GPUS=1
-   TEACHER_GPUS="${GPU_IDS[TRAIN_GPU_COUNT]}"
+   # OPD/ExOPD need one scorer GPU; delta methods also use the base slot.
+   if [[ "${OPD_METHOD}" != sd_opd ]]; then
+      TEACHER_NUM_GPUS=1
+      TEACHER_GPUS="${GPU_IDS[TRAIN_GPU_COUNT]}"
+   fi
    CHAT_KWARGS="$(python3 -m slime.utils.shared_vocab)"
    REWARD_MODULE=slime.rollout.mimo_opd
    REWARD_ENDPOINT=score
@@ -87,6 +110,10 @@ if [[ "${OPD_TYPE}" == mimo ]]; then
       --sglang-context-length "${ROLLOUT_MAX_CONTEXT_LEN}"
       --rollout-stop-token-ids 151645 151643
    )
+fi
+if [[ "${OPD_METHOD}" == sd_opd ]]; then
+   REWARD_MODULE=slime.rollout.student_base_delta_distillation
+   REWARD_ENDPOINT=score
 fi
 
 CKPT_ARGS=(
@@ -168,7 +195,7 @@ MISC_ARGS=(
    --attention-softmax-in-fp32
    --attention-backend flash
    --use-tensorboard
-   --tb-project-name "${TB_PROJECT_NAME:-opd}"
+   --tb-project-name "${TB_PROJECT_NAME:-${OPD_METHOD}}"
    --tb-experiment-name "${TB_EXPERIMENT_NAME:-${RUN_NAME}}"
 )
 TRAIN_CMD=(
@@ -199,14 +226,45 @@ if [[ "${OPD_TYPE}" == mimo ]]; then
       --host 127.0.0.1 --port 13141
    )
 fi
+if [[ "${OPD_METHOD}" == sd_opd ]]; then
+   # On 4 GPUs the teacher/base share one GPU; on 8 GPUs they use one each.
+   BASE_DEVICE=cuda:0
+   if (( TEACHER_NUM_GPUS == 2 )); then
+      BASE_DEVICE=cuda:1
+   fi
+   SCORER_MODULE=slime.rollout.student_base_delta_scorer
+   SCORER_ARGS=(
+      --mode direct --strength 0 --student-source current
+      --top-k "${STUDENT_BASE_DELTA_TOP_K}"
+      --chunk-size "${STUDENT_BASE_DELTA_CHUNK_SIZE}"
+   )
+   if [[ "${OPD_TYPE}" == mimo ]]; then
+      SCORER_ARGS+=(--shared-vocab-size 151665)
+   fi
+   TEACHER_CMD=(
+      python3 -m "${SCORER_MODULE}"
+      --teacher-model "${TEACHER_MODEL}"
+      --student-model "${STUDENT_MODEL}"
+      "${BASE_MODEL_ARGS[@]}" "${SCORER_ARGS[@]}"
+      --teacher-device cuda:0 --base-device "${BASE_DEVICE}"
+      --max-context "${ROLLOUT_MAX_CONTEXT_LEN}"
+      --host 127.0.0.1 --port 13141
+   )
+fi
 
 echo "${OPD_VARIANT}: ${TEACHER_NAME} -> ${STUDENT_NAME}; checkpoints: ${SAVE_DIR}"
 if [[ "${TRAIN_OPD_TYPE}" == exopd ]]; then
    echo "ExOPD: lambda=${EXOPD_SCALE}; frozen initial student=${STUDENT_MCORE}"
 fi
 echo "Actor/rollout GPUs: ${TRAIN_GPUS}; teacher GPUs: ${TEACHER_GPUS}"
+echo "TensorBoard: ${TENSORBOARD_DIR}"
+EXTRA_REQUIRED_PATHS=()
+if [[ "${OPD_METHOD}" == sd_opd ]]; then
+   echo "SD-OPD: current student / frozen student base=${STUDENT_BASE_MODEL}; teacher sign gate"
+   EXTRA_REQUIRED_PATHS=("${STUDENT_BASE_MODEL}/config.json")
+fi
 for required_path in "${STUDENT_MODEL}/config.json" "${TEACHER_MODEL}/config.json" \
-   "${STUDENT_MCORE}" "${DATA_PATH}"; do
+   "${STUDENT_MCORE}" "${DATA_PATH}" "${EXTRA_REQUIRED_PATHS[@]}"; do
    if [[ ! -e "${required_path}" ]]; then
       echo "Missing required path: ${required_path}" >&2
       exit 1
@@ -246,7 +304,7 @@ trap 'exit 129' HUP
 # Fixed ports, matching Slime's example.
 CUDA_VISIBLE_DEVICES="${TEACHER_GPUS}" setsid "${TEACHER_CMD[@]}" >"${TEACHER_LOG_FILE}" 2>&1 &
 TEACHER_PID=$!
-deadline=$((SECONDS + 600))
+deadline=$((SECONDS + ${TEACHER_START_TIMEOUT:-1200}))
 until curl -sf --connect-timeout 2 --max-time 5 http://127.0.0.1:13141/health_generate >/dev/null; do
    if ! kill -0 "${TEACHER_PID}" 2>/dev/null || (( SECONDS >= deadline )); then
       tail -n 40 "${TEACHER_LOG_FILE}" >&2
@@ -266,11 +324,7 @@ ray start --head --node-ip-address "${MASTER_ADDR}" --num-gpus "${TRAIN_GPU_COUN
    --disable-usage-stats --dashboard-host=127.0.0.1 --dashboard-port=8265 &
 # Waiting on a background command lets INT/TERM/HUP trigger cleanup promptly.
 wait "$!"
-RUNTIME_ENV_JSON=$(python3 -c '
-import json, os
-keys = ("PYTHONPATH", "PYTHONUNBUFFERED", "CUDA_DEVICE_MAX_CONNECTIONS", "SD_OPD_RAY_RUN_ID")
-print(json.dumps({"env_vars": {key: os.environ[key] for key in keys}}))
-')
+RUNTIME_ENV_JSON="$(python3 "${TRAIN_DIR}/utils/ray_runtime_env.py")"
 ray job submit --address=http://127.0.0.1:8265 \
    --runtime-env-json="${RUNTIME_ENV_JSON}" \
    -- "${TRAIN_CMD[@]}" 2>&1 | tee "${SAVE_DIR}/train.log" &

@@ -387,8 +387,13 @@ class MegatronTrainRayActor(TrainRayActor):
         use_rollout_top_p_replay: bool = True,
     ) -> dict[str, list[torch.Tensor]]:
         with timer(f"{store_prefix}log_probs"):
+            log_prob_function = get_log_probs_and_entropy
+            if not store_prefix and self.args.opd_type == "student_base_delta":
+                from .student_base_delta import get_student_base_delta_log_probs_and_entropy
+
+                log_prob_function = get_student_base_delta_log_probs_and_entropy
             return forward_only(
-                get_log_probs_and_entropy,
+                log_prob_function,
                 self.args,
                 self.model,
                 data_iterator,

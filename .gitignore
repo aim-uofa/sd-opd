@@ -11,3 +11,6 @@
 /eval/results/
 __pycache__/
 *.py[cod]
+
+init.sh
+temp_*.sh

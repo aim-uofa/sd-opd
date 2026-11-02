@@ -1261,14 +1261,15 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--opd-type",
                 type=str,
-                choices=["sglang", "megatron", "mimo", "exopd"],
+                choices=["sglang", "megatron", "mimo", "exopd", "student_base_delta"],
                 default=None,
                 help=(
                     "Type of on-policy distillation. "
                     "'sglang': Teacher log-probs are obtained from external SGLang server during rollout. "
                     "'megatron': Teacher model is loaded via --opd-teacher-load and forwarded during training. "
                     "'mimo': A frozen MiMo service scores Qwen3 responses on the shared vocabulary. "
-                    "'exopd': Extrapolate external teacher rewards using the frozen initial student."
+                    "'exopd': Extrapolate external teacher rewards using the frozen initial student. "
+                    "'student_base_delta': Student/base delta with current-student centering and teacher gating."
                 ),
             )
             parser.add_argument(
@@ -1277,6 +1278,16 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 default=1.25,
                 help="ExOPD reward extrapolation lambda; 1 recovers vanilla OPD.",
             )
+            parser.add_argument(
+                "--student-base-delta-mode", choices=["direct", "boost", "ungated", "vanilla"], default="direct"
+            )
+            parser.add_argument(
+                "--student-base-delta-student-source", choices=["current", "initial"], default="current"
+            )
+            parser.add_argument("--student-base-delta-strength", type=float, default=0.0)
+            parser.add_argument("--student-base-delta-top-k", type=int, default=1024)
+            parser.add_argument("--student-base-delta-scorer-url", type=str, default=None)
+            parser.add_argument("--student-base-delta-scorer-timeout", type=float, default=600.0)
             parser.add_argument(
                 "--opd-shared-vocab-size",
                 type=int,
@@ -1946,7 +1957,7 @@ def slime_validate_args(args):
     if args.use_opd:
         if args.opd_type is None:
             raise ValueError(
-                "--opd-type must be specified when --use-opd is enabled. Choose 'sglang', 'megatron', 'mimo' or 'exopd'."
+                "--opd-type must be specified: sglang, megatron, mimo, exopd or student_base_delta."
             )
 
         if args.opd_type == "megatron":
@@ -1965,7 +1976,7 @@ def slime_validate_args(args):
                     "please make sure it is a valid megatron checkpoint directory."
                 )
 
-        elif args.opd_type in ("sglang", "mimo", "exopd"):
+        elif args.opd_type in ("sglang", "mimo", "exopd", "student_base_delta"):
             if args.opd_teacher_load is not None:
                 raise ValueError(
                     "--opd-teacher-load should not be set for an external OPD teacher. "
@@ -1975,6 +1986,11 @@ def slime_validate_args(args):
         # If OPD is not enabled, opd_teacher_load should not be set
         if args.opd_teacher_load is not None:
             raise ValueError("--opd-teacher-load is set but --use-opd is not enabled. Please add --use-opd flag.")
+
+    if args.opd_type == "student_base_delta":
+        from slime.utils.student_base_delta import validate_args as validate_student_base_delta_args
+
+        validate_student_base_delta_args(args)
 
     if args.opd_type == "exopd":
         from slime.utils.exopd import validate_exopd_args

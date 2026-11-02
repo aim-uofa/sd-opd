@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared training defaults for vanilla OPD and ExOPD.
+# Shared training defaults for OPD, ExOPD and SD-OPD.
 # Source this file from a launcher; environment variables override defaults.
 
 TRAIN_SEED="${TRAIN_SEED:-11}"
